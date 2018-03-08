@@ -1,0 +1,8 @@
+version: '3'
+
+services:
+  imotblackbox:
+    image: registry.gitlab.com/iisidotnetgroup/imot.changan.messagesender.aspnetcore
+    build:
+      context: .
+      dockerfile: iMOTBlackBox/Dockerfile
