@@ -143,7 +143,7 @@ namespace iMOTBlackBox.MqttClient
                                         {
 
                                             var dbPatientsCard = db.PatientsCards.Include(p => p.Patients).Include(p => p.Patients.LongOrder).SingleOrDefault(p => p.CardNumber == root.patient.id);
-                                            var dbPatient = dbPatientsCard.Patients;
+                                            var dbPatient = dbPatientsCard != null ? dbPatientsCard.Patients : null;
                                             var dbLongOrder = dbPatient != null ? dbPatient.LongOrder.OrderByDescending(p => p.Date).FirstOrDefault() : null;
 
                                             if (dbLongOrder != null)
@@ -244,11 +244,11 @@ namespace iMOTBlackBox.MqttClient
                                 {
                                     using (iMOTContext db = new iMOTContext(_connectionString))
                                     {
-                                        var dbPatientsCard = db.PatientsCards.SingleOrDefault(p => p.CardNumber == cardId);
+                                        var dbPatientsCard = db.PatientsCards.Include(p => p.Patients).Include(p => p.Patients.LongOrder).SingleOrDefault(p => p.CardNumber == cardId);
 
                                         if (dbPatientsCard != null)
                                         {
-                                            var dbPatient = db.Patients.Include(p => p.LongOrder).Include(p => p.PatientsCard).SingleOrDefault(p => p.Id == dbPatientsCard.PatientId);
+                                            var dbPatient = dbPatientsCard != null ? dbPatientsCard.Patients : null;
                                             var dbLongOrder = dbPatient != null ? dbPatient.LongOrder.OrderByDescending(p => p.Date).FirstOrDefault() : null;
 
                                             if (dbLongOrder != null)
