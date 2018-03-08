@@ -123,7 +123,7 @@ namespace iMOTBlackBox.MqttClient
                             if (jObj.Property("data") != null)
                             {
                                 if (((JObject)jObj["data"]).Property("weight") != null)
-                                {                                   
+                                {
                                     var root = jObj.ToObject<WeightModel>();
                                     var t = root.data.created;
                                     var createTime = _unixTime.AddMilliseconds(t);
@@ -148,12 +148,12 @@ namespace iMOTBlackBox.MqttClient
 
                                             if (dbLongOrder != null)
                                             {
-                                                double weight = Math.Round(root.data.weight, 1);
-                                                double dryWeight = dbLongOrder.DryWeight.HasValue ? Math.Round(dbLongOrder.DryWeight.Value, 1) : 0;
-                                                double uftarget = dryWeight != 0 ? Math.Round(weight - dryWeight, 1) : 0;
-                                                double bloodFlow = dbLongOrder.BloodFlow.HasValue ? Math.Round(dbLongOrder.BloodFlow.Value, 0) : 0;
-                                                double startValue = dbLongOrder.StartValue.HasValue ? Math.Round(dbLongOrder.StartValue.Value, 0) : 0;
-                                                double maintainValue = dbLongOrder.MaintainValue.HasValue ? Math.Round(dbLongOrder.MaintainValue.Value, 0) : 0;
+                                                double weight = Math.Floor(root.data.weight * 10) / 10;
+                                                double dryWeight = dbLongOrder.DryWeight.HasValue ? Math.Floor(dbLongOrder.DryWeight.Value * 10) / 10 : 0;
+                                                double uftarget = dryWeight != 0 ? Math.Floor((weight - dryWeight) * 10) / 10 : 0;
+                                                double bloodFlow = dbLongOrder.BloodFlow.HasValue ? Math.Floor(dbLongOrder.BloodFlow.Value) : 0;
+                                                double startValue = dbLongOrder.StartValue.HasValue ? Math.Floor(dbLongOrder.StartValue.Value) : 0;
+                                                double maintainValue = dbLongOrder.MaintainValue.HasValue ? Math.Floor(dbLongOrder.MaintainValue.Value) : 0;
 
                                                 var IsAddPatient = _patientDictionary.TryAdd(root.patient.id, new ContentModel()
                                                 {
@@ -165,7 +165,7 @@ namespace iMOTBlackBox.MqttClient
                                                     BloodFlow = bloodFlow,
                                                     StartValue = startValue,
                                                     MaintainValue = maintainValue,
-                                                    CardId = dbPatient.PatientsCard.Select(p => p.CardNumber).ToList()
+                                                    CardId = root.patient.id
                                                 });
 
                                                 var patientContent = _patientDictionary.GetValueOrDefault(root.patient.id);
@@ -179,8 +179,6 @@ namespace iMOTBlackBox.MqttClient
                                                     patientContent.BloodFlow = bloodFlow;
                                                     patientContent.StartValue = startValue;
                                                     patientContent.MaintainValue = maintainValue;
-                                                    patientContent.CardId = dbPatient.PatientsCard.Select(p => p.CardNumber).ToList();
-
                                                 }
 
                                                 //如果體重測量的時間不為當天，則體重和脫水量為0
@@ -213,7 +211,7 @@ namespace iMOTBlackBox.MqttClient
                                                     BloodFlow = 0,
                                                     StartValue = 0,
                                                     MaintainValue = 0,
-                                                    CardId = dbPatient != null ? dbPatient.PatientsCard.Select(p => p.CardNumber).ToList() : new List<string>()
+                                                    CardId = root.patient.id
                                                 });
                                                 Console.WriteLine("LongOrder no data");
 
@@ -235,18 +233,7 @@ namespace iMOTBlackBox.MqttClient
                             {
                                 string cardId = e.ApplicationMessage.Topic.Replace($"{requsetTopicArray[Num]}", "");
 
-                                var pulishPatient = _patientDictionary.Values.Where(p => p.CardId.Contains(cardId)).Select(p => new
-                                {
-                                    p.PatientId,
-                                    p.PatientName,
-                                    p.Weight,
-                                    p.DryWeight,
-                                    p.UFTarget,
-                                    p.BloodFlow,
-                                    p.StartValue,
-                                    p.MaintainValue,
-                                    CardId = cardId
-                                }).SingleOrDefault();
+                                var pulishPatient = _patientDictionary.GetValueOrDefault(cardId);
 
                                 if (pulishPatient != null)
                                 {
@@ -266,12 +253,12 @@ namespace iMOTBlackBox.MqttClient
 
                                             if (dbLongOrder != null)
                                             {
-                                                double dryWeight = dbLongOrder.DryWeight.HasValue ? Math.Round(dbLongOrder.DryWeight.Value, 1) : 0;
-                                                double bloodFlow = dbLongOrder.BloodFlow.HasValue ? Math.Round(dbLongOrder.BloodFlow.Value, 0) : 0;
-                                                double startValue = dbLongOrder.StartValue.HasValue ? Math.Round(dbLongOrder.StartValue.Value, 0) : 0;
-                                                double maintainValue = dbLongOrder.MaintainValue.HasValue ? Math.Round(dbLongOrder.MaintainValue.Value, 0) : 0;
+                                                double dryWeight = dbLongOrder.DryWeight.HasValue ? Math.Floor(dbLongOrder.DryWeight.Value * 10) / 10 : 0;
+                                                double bloodFlow = dbLongOrder.BloodFlow.HasValue ? Math.Floor(dbLongOrder.BloodFlow.Value) : 0;
+                                                double startValue = dbLongOrder.StartValue.HasValue ? Math.Floor(dbLongOrder.StartValue.Value) : 0;
+                                                double maintainValue = dbLongOrder.MaintainValue.HasValue ? Math.Floor(dbLongOrder.MaintainValue.Value) : 0;
 
-                                                var pulishDBPatient = new
+                                                var pulishDBPatient = new ContentModel()
                                                 {
                                                     PatientId = dbPatient.Id,
                                                     PatientName = dbPatient.Name,
@@ -288,7 +275,7 @@ namespace iMOTBlackBox.MqttClient
                                             }
                                             else
                                             {
-                                                var pulishDBPatient = new
+                                                var pulishDBPatient = new ContentModel()
                                                 {
                                                     PatientId = dbPatient != null ? dbPatient.Id : 0,
                                                     PatientName = dbPatient != null ? dbPatient.Name : string.Empty,
