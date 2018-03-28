@@ -19,7 +19,7 @@ namespace iMOTBlackBox.MqttClient
         private IMqttClient _mqttClient = new MqttFactory().CreateMqttClient();
         private object _messageReceivedLock = new object();
         private DateTime _unixTime = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
-        private Dictionary<string, ContentModel> _patientDictionary = new Dictionary<string, ContentModel>();
+        private Dictionary<string, WeightModel> _patientDictionary = new Dictionary<string, WeightModel>();
         private string _connectionString;
         private string _mqttConnectionIP;
         private string _userName;
@@ -118,15 +118,40 @@ namespace iMOTBlackBox.MqttClient
                         {
                             var jObj = JObject.Parse(messageReceived);
 
-                            #region 資料加工
+                            #region 紀錄病人測量體重
 
                             if (jObj.Property("data") != null)
                             {
                                 if (((JObject)jObj["data"]).Property("weight") != null)
                                 {
                                     var root = jObj.ToObject<WeightModel>();
-                                    var t = root.data.created;
-                                    var createTime = _unixTime.AddMilliseconds(t);
+                                    var createTime = _unixTime.AddMilliseconds(root.data.created);
+                                    double weight = Math.Floor(root.data.weight * 10) / 10;
+
+                                    //queue病人的體重資料
+                                    var IsAddPatient = _patientDictionary.TryAdd(root.patient.id, new WeightModel()
+                                    {
+                                        data = new Data()
+                                        {
+                                            created = root.data.created,
+                                            weight = weight
+                                        },
+                                        patient = new Patient() { id = root.patient.id }
+                                    });
+
+                                    if (IsAddPatient == false)
+                                    {
+                                        var patientWeight = _patientDictionary.GetValueOrDefault(root.patient.id);
+
+                                        //如果病人以測量過體重，再度測量覆寫
+                                        if (patientWeight != null)
+                                        {
+                                            patientWeight.data.weight = weight;
+                                            patientWeight.data.created = root.data.created;
+
+                                            Console.WriteLine($"{root.patient.id} 體重資料覆寫");
+                                        }
+                                    }
 
                                     Console.WriteLine("--------------------------------------------------");
                                     Console.WriteLine("### Message Received ###");
@@ -135,94 +160,12 @@ namespace iMOTBlackBox.MqttClient
                                     Console.WriteLine($"+ DataTime = {createTime}");
                                     Console.WriteLine($"+ Payload = {Encoding.UTF8.GetString(e.ApplicationMessage.Payload)}");
                                     Console.WriteLine("--------------------------------------------------");
-
-                                    if (_connectionString != null)
-                                    {
-                                        //取的病人DB資料
-                                        using (iMOTContext db = new iMOTContext(_connectionString))
-                                        {
-
-                                            var dbPatientsCard = db.PatientsCards.Include(p => p.Patients).Include(p => p.Patients.LongOrder).SingleOrDefault(p => p.CardNumber == root.patient.id);
-                                            var dbPatient = dbPatientsCard != null ? dbPatientsCard.Patients : null;
-                                            var dbLongOrder = dbPatient != null ? dbPatient.LongOrder.OrderByDescending(p => p.Date).FirstOrDefault() : null;
-
-                                            if (dbLongOrder != null)
-                                            {
-                                                double weight = Math.Floor(root.data.weight * 10) / 10;
-                                                double dryWeight = dbLongOrder.DryWeight.HasValue ? Math.Floor(dbLongOrder.DryWeight.Value * 10) / 10 : 0;
-                                                double uftarget = dryWeight != 0 ? Math.Floor((weight - dryWeight) * 10) / 10 : 0;
-                                                double bloodFlow = dbLongOrder.BloodFlow.HasValue ? Math.Floor(dbLongOrder.BloodFlow.Value) : 0;
-                                                double startValue = dbLongOrder.StartValue.HasValue ? Math.Floor(dbLongOrder.StartValue.Value) : 0;
-                                                double maintainValue = dbLongOrder.MaintainValue.HasValue ? Math.Floor(dbLongOrder.MaintainValue.Value) : 0;
-
-                                                var IsAddPatient = _patientDictionary.TryAdd(root.patient.id, new ContentModel()
-                                                {
-                                                    PatientName = dbPatient.Name,
-                                                    PatientId = dbPatient.Id,
-                                                    Weight = weight,
-                                                    DryWeight = dryWeight,
-                                                    UFTarget = uftarget,
-                                                    BloodFlow = bloodFlow,
-                                                    StartValue = startValue,
-                                                    MaintainValue = maintainValue,
-                                                    CardId = root.patient.id
-                                                });
-
-                                                var patientContent = _patientDictionary.GetValueOrDefault(root.patient.id);
-
-                                                //如果資料已存在，複寫資料內容
-                                                if (IsAddPatient == false && patientContent != null)
-                                                {
-                                                    patientContent.Weight = weight;
-                                                    patientContent.DryWeight = dryWeight;
-                                                    patientContent.UFTarget = uftarget;
-                                                    patientContent.BloodFlow = bloodFlow;
-                                                    patientContent.StartValue = startValue;
-                                                    patientContent.MaintainValue = maintainValue;
-                                                }
-
-                                                //如果體重測量的時間不為當天，則體重和脫水量為0
-                                                if (createTime.Day - DateTime.UtcNow.Day != 0 && patientContent != null)
-                                                {
-                                                    patientContent.Weight = 0;
-                                                    patientContent.UFTarget = 0;
-                                                }
-
-                                                //如果DB資料Date為null，則數值歸0
-                                                if (!dbLongOrder.Date.HasValue && patientContent != null)
-                                                {
-                                                    patientContent.Weight = 0;
-                                                    patientContent.DryWeight = 0;
-                                                    patientContent.UFTarget = 0;
-                                                    patientContent.BloodFlow = 0;
-                                                    patientContent.StartValue = 0;
-                                                    patientContent.MaintainValue = 0;
-                                                }
-                                            }
-                                            else
-                                            {
-                                                var IsAddPatient = _patientDictionary.TryAdd(root.patient.id, new ContentModel()
-                                                {
-                                                    PatientId = dbPatient != null ? dbPatient.Id : 0,
-                                                    PatientName = dbPatient != null ? dbPatient.Name : string.Empty,
-                                                    Weight = 0,
-                                                    DryWeight = 0,
-                                                    UFTarget = 0,
-                                                    BloodFlow = 0,
-                                                    StartValue = 0,
-                                                    MaintainValue = 0,
-                                                    CardId = root.patient.id
-                                                });
-                                                Console.WriteLine("LongOrder no data");
-
-                                            }
-                                        }
-                                    }
                                 }
                             }
 
                             #endregion
                         }
+
 
                         #region 正則判斷Topic，並推送出去
 
@@ -233,14 +176,98 @@ namespace iMOTBlackBox.MqttClient
                             {
                                 string cardId = e.ApplicationMessage.Topic.Replace($"{requsetTopicArray[Num]}", "");
 
-                                var pulishPatient = _patientDictionary.GetValueOrDefault(cardId);
+                                //取得病人的體重資料
+                                var patientWeight = _patientDictionary.GetValueOrDefault(cardId);
 
-                                if (pulishPatient != null)
+                                ContentModel pulishDBPatient;
+
+                                //取的病人DB資料
+                                if (patientWeight != null && _connectionString != null)
                                 {
-                                    Pulish(pulishPatient, $"{responseTopicArray[Num]}{cardId}");
+                                    using (iMOTContext db = new iMOTContext(_connectionString))
+                                    {
+
+                                        var dbPatientsCard = db.PatientsCards.Include(p => p.Patients).Include(p => p.Patients.LongOrder).SingleOrDefault(p => p.CardNumber == patientWeight.patient.id);
+                                        var dbPatient = dbPatientsCard != null ? dbPatientsCard.Patients : null;
+                                        var dbLongOrder = dbPatient != null ? dbPatient.LongOrder.OrderByDescending(p => p.Date).FirstOrDefault() : null;
+
+                                        if (dbLongOrder != null)
+                                        {
+                                            double weight = patientWeight.data.weight;
+                                            double dryWeight = dbLongOrder.DryWeight.HasValue ? Math.Floor(dbLongOrder.DryWeight.Value * 10) / 10 : 0;
+                                            double uftarget = dryWeight != 0 ? Math.Floor((weight - dryWeight) * 10) / 10 : 0;
+                                            double bloodFlow = dbLongOrder.BloodFlow.HasValue ? Math.Floor(dbLongOrder.BloodFlow.Value) : 0;
+                                            double startValue = dbLongOrder.StartValue.HasValue ? Math.Floor(dbLongOrder.StartValue.Value) : 0;
+                                            double maintainValue = dbLongOrder.MaintainValue.HasValue ? Math.Floor(dbLongOrder.MaintainValue.Value) : 0;
+
+                                            pulishDBPatient = new ContentModel()
+                                            {
+                                                PatientId = dbPatient.Id,
+                                                PatientName = dbPatient.Name,
+                                                Weight = weight,
+                                                DryWeight = dryWeight,
+                                                UFTarget = uftarget,
+                                                BloodFlow = bloodFlow,
+                                                StartValue = startValue,
+                                                MaintainValue = maintainValue,
+                                                CardId = cardId
+                                            };
+
+                                            var createTime = _unixTime.AddMilliseconds(patientWeight.data.created);
+
+                                            //如果體重測量的時間不為當天，則體重和脫水量為0
+                                            if (createTime.Day - DateTime.UtcNow.Day != 0)
+                                            {
+                                                pulishDBPatient.Weight = 0;
+                                                pulishDBPatient.UFTarget = 0;
+
+                                                Console.WriteLine($"{cardId} 體重測量時間: {createTime} ，測量不為當天");
+                                            }
+
+                                            //如果DB資料Date為null，則數值歸0
+                                            if (!dbLongOrder.Date.HasValue)
+                                            {
+                                                pulishDBPatient.Weight = 0;
+                                                pulishDBPatient.DryWeight = 0;
+                                                pulishDBPatient.UFTarget = 0;
+                                                pulishDBPatient.BloodFlow = 0;
+                                                pulishDBPatient.StartValue = 0;
+                                                pulishDBPatient.MaintainValue = 0;
+
+                                                Console.WriteLine($"{cardId} 資料庫LongOrder的欄位Date為null");
+                                            }
+                                        }
+                                        else
+                                        {
+                                            pulishDBPatient = new ContentModel()
+                                            {
+                                                PatientId = dbPatient != null ? dbPatient.Id : 0,
+                                                PatientName = dbPatient != null ? dbPatient.Name : string.Empty,
+                                                Weight = 0,
+                                                DryWeight = 0,
+                                                UFTarget = 0,
+                                                BloodFlow = 0,
+                                                StartValue = 0,
+                                                MaintainValue = 0,
+                                                CardId = cardId
+                                            };
+
+                                            Console.WriteLine($"{cardId} LongOrder no data");
+                                        }
+                                    }
+
+                                    if (pulishDBPatient != null)
+                                    {
+                                        Pulish(pulishDBPatient, $"{responseTopicArray[Num]}{cardId}");
+                                    }
+                                    else
+                                    {
+                                        Console.WriteLine("有測量體重，pulishDBPatient is null");
+                                    }
                                 }
+
                                 //如果沒有量體重或_patientDictionary沒有資料的話
-                                else if (pulishPatient == null && _connectionString != null)
+                                else if (patientWeight == null && _connectionString != null)
                                 {
                                     using (iMOTContext db = new iMOTContext(_connectionString))
                                     {
@@ -258,7 +285,7 @@ namespace iMOTBlackBox.MqttClient
                                                 double startValue = dbLongOrder.StartValue.HasValue ? Math.Floor(dbLongOrder.StartValue.Value) : 0;
                                                 double maintainValue = dbLongOrder.MaintainValue.HasValue ? Math.Floor(dbLongOrder.MaintainValue.Value) : 0;
 
-                                                var pulishDBPatient = new ContentModel()
+                                                pulishDBPatient = new ContentModel()
                                                 {
                                                     PatientId = dbPatient.Id,
                                                     PatientName = dbPatient.Name,
@@ -271,11 +298,11 @@ namespace iMOTBlackBox.MqttClient
                                                     CardId = cardId
                                                 };
 
-                                                Pulish(pulishDBPatient, $"{responseTopicArray[Num]}{cardId}");
+                                                Console.WriteLine($"{cardId} 沒有測量體重");
                                             }
                                             else
                                             {
-                                                var pulishDBPatient = new ContentModel()
+                                                pulishDBPatient = new ContentModel()
                                                 {
                                                     PatientId = dbPatient != null ? dbPatient.Id : 0,
                                                     PatientName = dbPatient != null ? dbPatient.Name : string.Empty,
@@ -288,10 +315,19 @@ namespace iMOTBlackBox.MqttClient
                                                     CardId = cardId
                                                 };
 
+                                                Console.WriteLine($"{cardId} 沒測量體重，資料庫也沒資料");
+                                            }
+                                            if (pulishDBPatient != null)
+                                            {
                                                 Pulish(pulishDBPatient, $"{responseTopicArray[Num]}{cardId}");
+                                            }
+                                            else
+                                            {
+                                                Console.WriteLine("沒測量體重，pulishDBPatient is null");
                                             }
                                         }
                                     }
+
                                 }
                                 break;
                             }
